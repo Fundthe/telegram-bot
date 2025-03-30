@@ -62,7 +62,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 app = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
 
 conv_handler = ConversationHandler(
-    entry_points=[CommandHandler("start", start)],
+    entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, start)],
     states={
         RATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_rate)],
         HOURS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_hours)],

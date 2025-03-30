@@ -52,7 +52,11 @@ async def get_hours(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🧮 Простой % в год: {simple:.2f}%"
         )
         await update.message.reply_text(response)
-        return ConversationHandler.END
+
+# Добавим повторный запрос
+await update.message.reply_text("💬 Напиши процент ставки финансирования (например: 0.5)")
+return RATE  # Возвращаемся в начало диалога
+
     except:
         await update.message.reply_text("⚠️ Введи количество часов числом, например: 4")
         return HOURS

@@ -1,4 +1,3 @@
-
 import os
 from dotenv import load_dotenv
 from telegram import Update
@@ -7,12 +6,28 @@ from telegram.ext import (
     ContextTypes, ConversationHandler, filters
 )
 
+from flask import Flask
+from threading import Thread
+
+# --- Keep Alive ---
+app_web = Flask('')
+
+@app_web.route('/')
+def home():
+    return "I'm alive!"
+
+def run():
+    app_web.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+
+# --- Telegram bot ---
 load_dotenv()
 
 # Этапы диалога
 RATE, HOURS = range(2)
-
-# Временное хранилище для значений
 user_data_temp = {}
 
 def calculate_simple(rate, hours, days=365):
@@ -57,6 +72,8 @@ async def get_hours(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return RATE
 
 if __name__ == "__main__":
+    keep_alive()  # запуск веб-сервера для Replit
+
     app = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
 
     conv_handler = ConversationHandler(

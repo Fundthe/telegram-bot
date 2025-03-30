@@ -20,7 +20,9 @@ def calculate_simple(rate, hours, days=365):
     return rate * periods_per_day * days
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("💬 Напиши процент ставки финансирования (например: 0.5)")
+    await update.message.reply_text("Я помогу тебе рассчитать простой годовой процент по ставке финансирования.\n\n"
+    "💬 Напиши процент ставки (например: 0.5)"
+)
     return RATE
 
 async def get_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):

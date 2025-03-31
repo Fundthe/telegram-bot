@@ -31,6 +31,30 @@ LOAN_LTV, LOAN_BORROW_FACTOR, IL_INPUT = range(14)
 
 user_data_temp = {}
 
+def calculate_simple(rate, hours):
+    periods = 8760 / hours  # часов в году
+    return rate * periods
+
+def calculate_looping_table(tokens, ltv, supply_rate, borrow_rate):
+    rounds = []
+    deposit = tokens
+    total_borrow = 0
+
+    for i in range(1, 11):
+        borrow = deposit * ltv
+        total_borrow += borrow
+        deposit += borrow
+        net_apy = (deposit * supply_rate - total_borrow * borrow_rate) / tokens
+        rounds.append({
+            'round': i,
+            'deposit': deposit,
+            'borrow': borrow,
+            'total_borrow': total_borrow,
+            'apy': net_apy
+        })
+
+    return rounds
+    
 def back_to_menu_button():
     return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В начало", callback_data="back")]])
 
@@ -46,32 +70,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif update.callback_query:
         await update.callback_query.message.edit_text("📋 Главное меню\n\n🔽 Выбери один из вариантов:", reply_markup=keyboard)
     return CHOOSING
-
-async def choose_option(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if query.data == "back":
-        return await start(update, context)
-
-    choice = query.data
-
-    if choice == "rate":
-        await query.edit_message_text("💬 Введи процент ставки (например: 0.5):", reply_markup=back_to_menu_button())
-        return RATE
-    elif choice == "looping":
-        await query.edit_message_text("🔢 Введи количество токенов:", reply_markup=back_to_menu_button())
-        return LOOP_TOKENS
-    elif choice == "loan":
-        await query.edit_message_text("💰 Введи количество токенов в депозите:", reply_markup=back_to_menu_button())
-        return LOAN_DEP_AMOUNT
-    elif choice == "il":
-        await query.edit_message_text("🔠 Введи название первой монеты:", reply_markup=back_to_menu_button())
-        user_data_temp[query.message.chat_id] = {}
-        return IL_INPUT
-    else:
-        await query.edit_message_text("❌ Неизвестная команда. Попробуй ещё раз.")
-        return CHOOSING
 
 async def get_il_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -161,11 +159,11 @@ async def get_hours(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⬇️ Выбери следующую функцию:"
         )
         await update.message.reply_text(response)
-        return await start(update, context)
+        return await start(update, context)  # ✅
     except Exception:
         await update.message.reply_text("❌ Что-то пошло не так. Попробуй ещё раз.")
         return RATE
-
+        
 async def get_loop_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         tokens = float(update.message.text.strip())
@@ -209,8 +207,8 @@ async def get_loop_borrow(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         response = "✅ Расчёт по лупингу (10 кругов):\n\n"
-        response += "```\n"   
-        response = "Круг |   Депозит  |   Заём   |   Долг   |   APY"
+        response += "```\n"
+        response += "Круг |   Депозит  |   Заём   |   Долг   |   APY\n"
         response += "-----|------------|----------|----------|--------\n"
 
         for r in rounds:
@@ -219,12 +217,11 @@ async def get_loop_borrow(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response += "```\n"
         response += "\n⬇️ Выбери следующую функцию:"
         await update.message.reply_text(response)
-        return await start(update, context)
-
-    except Exception:
-        await update.message.reply_text("❌ Что-то пошло не так. Попробуй ещё раз.")
+        return await start(update, context)  # ✅
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {e}")
         return LOOP_BORROW
-
+        
 async def get_loan_dep_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         amount = float(update.message.text.strip())
@@ -369,7 +366,7 @@ async def get_il_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_markdown_v2(response)
             user_data_temp[chat_id] = {}
             return await start(update, context)
-            
+
             await update.message.reply_text(response)
             return await start(update, context)
 
@@ -384,6 +381,48 @@ async def get_il_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 from telegram.ext import CallbackQueryHandler
 
+async def choose_option(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "back":
+        return await start(update, context)
+
+    choice = query.data
+
+    if choice == "rate":
+        await query.edit_message_text(
+            "💬 Введи процент ставки (например: 0.5):",
+            reply_markup=back_to_menu_button()
+        )
+        return RATE
+
+    elif choice == "looping":
+        await query.edit_message_text(
+            "🔢 Введи количество токенов:",
+            reply_markup=back_to_menu_button()
+        )
+        return LOOP_TOKENS
+
+    elif choice == "loan":
+        await query.edit_message_text(
+            "💰 Введи количество токенов в депозите:",
+            reply_markup=back_to_menu_button()
+        )
+        return LOAN_DEP_AMOUNT
+
+    elif choice == "il":
+        await query.edit_message_text(
+            "🔠 Введи название первой монеты:",
+            reply_markup=back_to_menu_button()
+        )
+        user_data_temp[query.from_user.id] = {}  # <-- исправлено!
+        return IL_INPUT
+
+    else:
+        await query.edit_message_text("❌ Неизвестная команда. Попробуй ещё раз.")
+        return CHOOSING
+        
 # --- Хендлер состояний ---
 conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(choose_option)],

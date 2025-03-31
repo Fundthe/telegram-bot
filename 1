@@ -31,37 +31,6 @@ LOAN_LTV, LOAN_BORROW_FACTOR, IL_INPUT = range(14)
 
 user_data_temp = {}
 
-def calculate_simple(rate, hours, days=365):
-    periods_per_day = 24 / hours
-    return rate * periods_per_day * days
-
-def calculate_looping_table(tokens, ltv, supply_rate, borrow_rate, loops=10):
-    supply_rate /= 100
-    borrow_rate /= 100
-    ltv = float(ltv)
-
-    results = []
-    deposit = tokens
-    total_borrow = 0
-
-    for i in range(1, loops + 1):
-        borrow = tokens * (ltv ** i)
-        total_borrow += borrow
-        deposit += borrow
-
-        supply_income = deposit * supply_rate
-        borrow_cost = total_borrow * borrow_rate
-        apy = ((supply_income - borrow_cost) / tokens) * 100
-
-        results.append({
-            'round': i,
-            'deposit': round(deposit, 2),
-            'borrow': round(borrow, 2),
-            'total_borrow': round(total_borrow, 2),
-            'apy': round(apy, 2)
-        })
-    return results
-
 def back_to_menu_button():
     return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В начало", callback_data="back")]])
 
@@ -97,13 +66,78 @@ async def choose_option(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("💰 Введи количество токенов в депозите:", reply_markup=back_to_menu_button())
         return LOAN_DEP_AMOUNT
     elif choice == "il":
-        await query.edit_message_text("📉 Введи цену первого токена при входе в пул:", reply_markup=back_to_menu_button())
+        await query.edit_message_text("🔠 Введи название первой монеты:", reply_markup=back_to_menu_button())
         user_data_temp[query.message.chat_id] = {}
         return IL_INPUT
     else:
         await query.edit_message_text("❌ Неизвестная команда. Попробуй ещё раз.")
         return CHOOSING
-            
+
+async def get_il_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    text = update.message.text.strip().replace(',', '.')
+    user_state = user_data_temp.setdefault(chat_id, {})
+
+    try:
+        if 'token1' not in user_state:
+            user_state['token1'] = text.upper()
+            await update.message.reply_text(f"💰 Введи цену {user_state['token1']} при входе в пул:")
+            return IL_INPUT
+
+        elif 'p1_initial' not in user_state:
+            user_state['p1_initial'] = float(text)
+            await update.message.reply_text(f"📉 Введи текущую цену {user_state['token1']}:")
+            return IL_INPUT
+
+        elif 'p1_now' not in user_state:
+            user_state['p1_now'] = float(text)
+            await update.message.reply_text("🔠 Введи название второй монеты:")
+            return IL_INPUT
+
+        elif 'token2' not in user_state:
+            user_state['token2'] = text.upper()
+            await update.message.reply_text(f"💰 Введи цену {user_state['token2']} при входе в пул:")
+            return IL_INPUT
+
+        elif 'p2_initial' not in user_state:
+            user_state['p2_initial'] = float(text)
+            await update.message.reply_text(f"📉 Введи текущую цену {user_state['token2']}:")
+            return IL_INPUT
+
+        elif 'p2_now' not in user_state:
+            user_state['p2_now'] = float(text)
+
+            p1_initial = user_state['p1_initial']
+            p1_now = user_state['p1_now']
+            p2_initial = user_state['p2_initial']
+            p2_now = user_state['p2_now']
+
+            r1 = p1_now / p1_initial
+            r2 = p2_now / p2_initial
+            k = r1 / r2
+            il = (2 * (k ** 0.5) / (1 + k)) - 1
+
+            response = (
+                "📉 Impermanent Loss\n"
+                "```\n"
+                f"{user_state['token1']}: {p1_initial} → {p1_now}\n"
+                f"{user_state['token2']}: {p2_initial} → {p2_now}\n"
+                f"IL: {abs(il) * 100:.2f}%\n"
+                "```"
+            )
+
+            await update.message.reply_text(response)
+            return await start(update, context)
+
+        else:
+            user_data_temp[chat_id] = {}
+            await update.message.reply_text("❌ Что-то пошло не так. Начнём заново. Введи название первой монеты:")
+            return IL_INPUT
+
+    except Exception:
+        await update.message.reply_text("❌ Введи корректное число или название токена.")
+        return IL_INPUT
+
 async def get_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         rate = float(update.message.text.strip().replace('%', ''))
@@ -273,28 +307,44 @@ async def get_loan_borrow_factor(update: Update, context: ContextTypes.DEFAULT_T
 async def get_il_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     text = update.message.text.strip().replace(',', '.')
+    user_state = user_data_temp.setdefault(chat_id, {})
 
     try:
-        user_state = user_data_temp.setdefault(chat_id, {})
-
-        if 'p1_initial' not in user_state:
-            user_state['p1_initial'] = float(text)
-            await update.message.reply_text("🔁 Введи текущую цену первого токена:")
+        # Шаг 1: название первой монеты
+        if 'token1' not in user_state:
+            user_state['token1'] = text.upper()
+            await update.message.reply_text(f"💰 Введи цену {user_state['token1']} при входе в пул:")
             return IL_INPUT
 
+        # Шаг 2: цена первой монеты при входе
+        elif 'p1_initial' not in user_state:
+            user_state['p1_initial'] = float(text)
+            await update.message.reply_text(f"📉 Введи текущую цену {user_state['token1']}:")
+            return IL_INPUT
+
+        # Шаг 3: текущая цена первой монеты
         elif 'p1_now' not in user_state:
             user_state['p1_now'] = float(text)
-            await update.message.reply_text("🟠 Введи цену второго токена при входе в пул:")
+            await update.message.reply_text("🔠 Введи название второй монеты:")
             return IL_INPUT
 
+        # Шаг 4: название второй монеты
+        elif 'token2' not in user_state:
+            user_state['token2'] = text.upper()
+            await update.message.reply_text(f"💰 Введи цену {user_state['token2']} при входе в пул:")
+            return IL_INPUT
+
+        # Шаг 5: цена второй монеты при входе
         elif 'p2_initial' not in user_state:
             user_state['p2_initial'] = float(text)
-            await update.message.reply_text("🟡 Введи текущую цену второго токена:")
+            await update.message.reply_text(f"📉 Введи текущую цену {user_state['token2']}:")
             return IL_INPUT
 
+        # Шаг 6: текущая цена второй монеты
         elif 'p2_now' not in user_state:
             user_state['p2_now'] = float(text)
 
+            # Расчёт
             p1_initial = user_state['p1_initial']
             p1_now = user_state['p1_now']
             p2_initial = user_state['p2_initial']
@@ -305,16 +355,31 @@ async def get_il_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             k = r1 / r2
             il = (2 * (k ** 0.5) / (1 + k)) - 1
 
-            await update.message.reply_text(f"📉 Impermanent Loss (2 токена): {abs(il) * 100:.2f}%")
+            response = (
+                "📉 *Impermanent Loss*\n"
+                "```\n"
+                f"{'Монета':<10}│{'Вход':>10}│{'Выход':>10}\n"
+                f"{'-'*10}│{'-'*10}│{'-'*10}\n"
+                f"{user_state['token1']:<10}│{p1_initial:>10.2f}│{p1_now:>10.2f}\n"
+                f"{user_state['token2']:<10}│{p2_initial:>10.2f}│{p2_now:>10.2f}\n"
+                f"{'-'*33}\n"
+                f"{'Impermanent Loss':<10} → → →{abs(il) * 100:>10.2f}%\n"
+                "```"
+            )
+            await update.message.reply_markdown_v2(response)
+            user_data_temp[chat_id] = {}
+            return await start(update, context)
+            
+            await update.message.reply_text(response)
             return await start(update, context)
 
         else:
             user_data_temp[chat_id] = {}
-            await update.message.reply_text("❌ Что-то пошло не так. Начнём заново. Введи цену первого токена при входе в пул:")
+            await update.message.reply_text("❌ Что-то пошло не так. Начнём заново. Введи название первой монеты:")
             return IL_INPUT
 
     except Exception:
-        await update.message.reply_text("❌ Введи корректное число, например: 1200")
+        await update.message.reply_text("❌ Введи корректное число или название токена.")
         return IL_INPUT
 
 from telegram.ext import CallbackQueryHandler

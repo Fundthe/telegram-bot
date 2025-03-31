@@ -2,9 +2,9 @@ import os
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-        ApplicationBuilder, CommandHandler, MessageHandler,
-        ContextTypes, ConversationHandler, filters, CallbackQueryHandler
-    )
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    ContextTypes, ConversationHandler, filters, CallbackQueryHandler
+)
 from flask import Flask
 from threading import Thread
 
@@ -13,52 +13,58 @@ app_web = Flask('')
 
 @app_web.route('/')
 def home():
-        return "I'm alive!"
+    return "I'm alive!"
 
 def run():
-        app_web.run(host='0.0.0.0', port=8080)
+    app_web.run(host='0.0.0.0', port=8080)
 
 def keep_alive():
-        t = Thread(target=run)
-        t.start()
+    t = Thread(target=run)
+    t.start()
 
 # --- Telegram bot ---
 load_dotenv()
 
 CHOOSING, RATE, HOURS, LOOP_TOKENS, LOOP_LTV, LOOP_SUPPLY, LOOP_BORROW, \
-    LOAN_DEP_AMOUNT, LOAN_DEP_PRICE, LOAN_BORROW_AMOUNT, LOAN_BORROW_PRICE, LOAN_LTV, LOAN_BORROW_FACTOR, IL_INPUT = range(14)
+LOAN_DEP_AMOUNT, LOAN_DEP_PRICE, LOAN_BORROW_AMOUNT, LOAN_BORROW_PRICE, \
+LOAN_LTV, LOAN_BORROW_FACTOR, IL_INPUT = range(14)
+
 user_data_temp = {}
 
 def calculate_simple(rate, hours, days=365):
-        periods_per_day = 24 / hours
-        return rate * periods_per_day * days
+    periods_per_day = 24 / hours
+    return rate * periods_per_day * days
 
 def calculate_looping_table(tokens, ltv, supply_rate, borrow_rate, loops=10):
-        supply_rate /= 100
-        borrow_rate /= 100
-        ltv = float(ltv)
+    supply_rate /= 100
+    borrow_rate /= 100
+    ltv = float(ltv)
 
-        results = []
-        deposit = tokens
-        total_borrow = 0
+    results = []
+    deposit = tokens
+    total_borrow = 0
 
-        for i in range(1, loops + 1):
-            borrow = tokens * (ltv ** i)
-            total_borrow += borrow
-            deposit += borrow
+    for i in range(1, loops + 1):
+        borrow = tokens * (ltv ** i)
+        total_borrow += borrow
+        deposit += borrow
 
-            supply_income = deposit * supply_rate
-            borrow_cost = total_borrow * borrow_rate
-            apy = ((supply_income - borrow_cost) / tokens) * 100
+        supply_income = deposit * supply_rate
+        borrow_cost = total_borrow * borrow_rate
+        apy = ((supply_income - borrow_cost) / tokens) * 100
 
-            results.append({
-                'round': i,
-                'deposit': round(deposit, 2),
-                'borrow': round(borrow, 2),
-                'total_borrow': round(total_borrow, 2),
-                'apy': round(apy, 2)
-            })
-        return results
+        results.append({
+            'round': i,
+            'deposit': round(deposit, 2),
+            'borrow': round(borrow, 2),
+            'total_borrow': round(total_borrow, 2),
+            'apy': round(apy, 2)
+        })
+    return results
+
+def back_to_menu_button():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В начало", callback_data="back")]])
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📈 Ставка финансирования", callback_data="rate"),
@@ -75,25 +81,29 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def choose_option(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
+    if query.data == "back":
+        return await start(update, context)
+
     choice = query.data
 
     if choice == "rate":
-        await query.edit_message_text("💬 Введи процент ставки (например: 0.5)")
+        await query.edit_message_text("💬 Введи процент ставки (например: 0.5):", reply_markup=back_to_menu_button())
         return RATE
     elif choice == "looping":
-        await query.edit_message_text("🔢 Введи количество токенов:")
+        await query.edit_message_text("🔢 Введи количество токенов:", reply_markup=back_to_menu_button())
         return LOOP_TOKENS
     elif choice == "loan":
-        await query.edit_message_text("💰 Введи количество токенов в депозите:")
+        await query.edit_message_text("💰 Введи количество токенов в депозите:", reply_markup=back_to_menu_button())
         return LOAN_DEP_AMOUNT
     elif choice == "il":
-        await query.edit_message_text("📉 Введи цену первого токена при входе в пул:")
+        await query.edit_message_text("📉 Введи цену первого токена при входе в пул:", reply_markup=back_to_menu_button())
         user_data_temp[query.message.chat_id] = {}
         return IL_INPUT
     else:
         await query.edit_message_text("❌ Неизвестная команда. Попробуй ещё раз.")
         return CHOOSING
-
+            
 async def get_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         rate = float(update.message.text.strip().replace('%', ''))
@@ -309,33 +319,74 @@ async def get_il_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 from telegram.ext import CallbackQueryHandler
 
-if __name__ == "__main__":
-    keep_alive()
-    app = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
-
-    conv_handler = ConversationHandler(
-        entry_points=[
-            CommandHandler("start", start),
-            CallbackQueryHandler(choose_option)
-        ],
+# --- Хендлер состояний ---
+conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(choose_option)],
         states={
             CHOOSING: [CallbackQueryHandler(choose_option)],
-            RATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_rate)],
-            HOURS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_hours)],
-            LOOP_TOKENS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_loop_tokens)],
-            LOOP_LTV: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_loop_ltv)],
-            LOOP_SUPPLY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_loop_supply)],
-            LOOP_BORROW: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_loop_borrow)],
-            LOAN_DEP_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_dep_amount)],
-            LOAN_DEP_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_dep_price)],
-            LOAN_BORROW_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_borrow_amount)],
-            LOAN_BORROW_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_borrow_price)],
-            LOAN_LTV: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_ltv)],
-            LOAN_BORROW_FACTOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_borrow_factor)],
-            IL_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_il_input)],
+            RATE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_rate),
+                CallbackQueryHandler(choose_option, pattern="^back$")
+            ],
+            HOURS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_hours),
+                CallbackQueryHandler(choose_option, pattern="^back$")
+            ],
+            LOOP_TOKENS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_loop_tokens),
+                CallbackQueryHandler(choose_option, pattern="^back$")
+            ],
+            LOOP_LTV: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_loop_ltv),
+                CallbackQueryHandler(choose_option, pattern="^back$")
+            ],
+            LOOP_SUPPLY: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_loop_supply),
+                CallbackQueryHandler(choose_option, pattern="^back$")
+            ],
+            LOOP_BORROW: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_loop_borrow),
+                CallbackQueryHandler(choose_option, pattern="^back$")
+            ],
+            LOAN_DEP_AMOUNT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_dep_amount),
+                CallbackQueryHandler(choose_option, pattern="^back$")
+            ],
+            LOAN_DEP_PRICE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_dep_price),
+                CallbackQueryHandler(choose_option, pattern="^back$")
+            ],
+            LOAN_BORROW_AMOUNT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_borrow_amount),
+                CallbackQueryHandler(choose_option, pattern="^back$")
+            ],
+            LOAN_BORROW_PRICE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_borrow_price),
+                CallbackQueryHandler(choose_option, pattern="^back$")
+            ],
+            LOAN_LTV: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_ltv),
+                CallbackQueryHandler(choose_option, pattern="^back$")
+            ],
+            LOAN_BORROW_FACTOR: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_borrow_factor),
+                CallbackQueryHandler(choose_option, pattern="^back$")
+            ],
+            IL_INPUT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_il_input),
+                CallbackQueryHandler(choose_option, pattern="^back$")
+            ],
         },
-        fallbacks=[CommandHandler("start", start)]
+        fallbacks=[]
     )
 
-    app.add_handler(conv_handler)
-    app.run_polling()
+    # --- Запуск ---
+if __name__ == "__main__":
+        keep_alive()
+        app = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
+
+        app.add_handler(conv_handler)
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
+
+        app.run_polling()

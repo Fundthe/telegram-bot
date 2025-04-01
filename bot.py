@@ -63,10 +63,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📈 Ставка финансирования", callback_data="rate"),
          InlineKeyboardButton("🔁 Лупинг", callback_data="looping")],
         [InlineKeyboardButton("💳 Кредитование", callback_data="loan"),
-         InlineKeyboardButton("📉 IL", callback_data="il")]
+         InlineKeyboardButton("📉 Impermanent Loss", callback_data="il")]
     ])
     if update.message:
-        await update.message.reply_text("📋 Главное меню\n\n🔽 Выбери один из вариантов:", reply_markup=keyboard)
+        await update.message.reply_markdown_v2("*📋Главное меню калькулятора*", reply_markup=keyboard)
     elif update.callback_query:
         await update.callback_query.message.edit_text("📋 Главное меню\n\n🔽 Выбери один из вариантов:", reply_markup=keyboard)
     return CHOOSING
@@ -151,15 +151,19 @@ async def get_hours(update: Update, context: ContextTypes.DEFAULT_TYPE):
         hours = float(update.message.text.strip().replace('ч', '').replace(' ', ''))
         rate = user_data_temp[update.effective_chat.id]['rate']
         simple = calculate_simple(rate, hours)
+
         response = (
-            f"✅ Расчёт готов! \n"
-            f"📈 Процент за период: {rate}% \n"
-            f"⏱ Начисляется каждые: {hours} ч \n"
-            f"📅 Простой % в год: {simple:.2f}% \n"
-            f"⬇️ Выбери следующую функцию:"
+            "*📈 Расчёт фандинга*\n"
+            "```\n"
+            f"{'Ставка финансирования:':<22} {rate}%\n"
+            f"{'Начисляется каждые:':<22} {hours} ч\n"
+            f"{'APR:':<22} {simple:.2f}%\n"
+            "```"
         )
-        await update.message.reply_text(response)
-        return await start(update, context)  # ✅
+
+        await update.message.reply_markdown_v2(response)
+        return await start(update, context)
+
     except Exception:
         await update.message.reply_text("❌ Что-то пошло не так. Попробуй ещё раз.")
         return RATE
@@ -206,7 +210,7 @@ async def get_loop_borrow(update: Update, context: ContextTypes.DEFAULT_TYPE):
             borrow_rate=borrow
         )
 
-        response = "✅ Расчёт по лупингу (10 кругов):\n\n"
+        response = "🔁 *Лупинг (10 кругов)*\n"
         response += "```\n"
         response += "Круг |   Депозит  |   Заём   |   Долг   |   APY\n"
         response += "-----|------------|----------|----------|--------\n"
@@ -214,10 +218,12 @@ async def get_loop_borrow(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for r in rounds:
             response += f"{r['round']:>4} | {r['deposit']:>10.2f} | {r['borrow']:>8.2f} | {r['total_borrow']:>8.2f} | {r['apy']:>6.2f}%\n"
 
-        response += "```\n"
-        response += "\n⬇️ Выбери следующую функцию:"
-        await update.message.reply_text(response)
-        return await start(update, context)  # ✅
+        response += "```"
+
+        await update.message.reply_text(response, parse_mode='Markdown')
+        
+        return await start(update, context)
+
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
         return LOOP_BORROW
@@ -273,33 +279,34 @@ async def get_loan_ltv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         await update.message.reply_text("❌ Введи число.")
         return LOAN_LTV
-
 async def get_loan_borrow_factor(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        factor = float(update.message.text.strip())
-        data = user_data_temp[update.effective_chat.id]
-        dep_value = data['dep_amount'] * data['dep_price']
-        borrow_value = data['borrow_amount'] * data['borrow_price']
+            try:
+                factor = float(update.message.text.strip())
+                data = user_data_temp[update.effective_chat.id]
+                dep_value = data['dep_amount'] * data['dep_price']
+                borrow_value = data['borrow_amount'] * data['borrow_price']
 
-        hf = (data['ltv'] * dep_value) / (borrow_value * factor)
-        rf = 1 / hf if hf != 0 else 0
-        liquidation_price_dep = data['dep_price'] / hf if hf != 0 else 0
-        liquidation_price_borrow = data['borrow_price'] / hf if hf != 0 else 0
+                hf = (data['ltv'] * dep_value) / (borrow_value * factor)
+                rf = 1 / hf if hf != 0 else 0
+                liquidation_price_dep = data['dep_price'] / hf if hf != 0 else 0
+                liquidation_price_borrow = data['borrow_price'] / hf if hf != 0 else 0
 
-        response = (
-            f"✅ Результаты расчёта: \n"
-            f"🟢 Health Factor: {hf:.2f} \n"
-            f"⚠️ Risk Factor: {rf:.1%} \n"
-            f"💣 Ликв. цена депозита: ${liquidation_price_dep:.4f} \n"
-            f"💣 Ликв. цена займа: ${liquidation_price_borrow:.4f} \n"
-            f"⬇️ Выбери следующую функцию:"
-        )
+                response = (
+                    "💳 *Кредитование*\n"
+                    "```\n"
+                    f"Health Factor:         {hf:.2f}\n"
+                    f"Risk Factor:           {rf:.1%}\n"
+                    f"Ликв. цена депозита:   ${liquidation_price_dep:.4f}\n"
+                    f"Ликв. цена займа:      ${liquidation_price_borrow:.4f}\n"
+                    "```\n"
+                )
 
-        await update.message.reply_text(response)
-        return await start(update, context)
-    except:
-        await update.message.reply_text("❌ Что-то пошло не так.")
-        return LOAN_BORROW_FACTOR
+                await update.message.reply_text(response, parse_mode='Markdown')
+                return await start(update, context)
+
+            except:
+                await update.message.reply_text("❌ Что-то пошло не так.")
+                return LOAN_BORROW_FACTOR
 
 async def get_il_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -488,6 +495,12 @@ conv_handler = ConversationHandler(
 if __name__ == "__main__":
         keep_alive()
         app = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
+
+        app.add_handler(conv_handler)
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
+
+        app.run_polling()
 
         app.add_handler(conv_handler)
         app.add_handler(CommandHandler("start", start))

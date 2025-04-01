@@ -27,7 +27,7 @@ load_dotenv()
 
 CHOOSING, RATE, HOURS, LOOP_TOKENS, LOOP_LTV, LOOP_SUPPLY, LOOP_BORROW, \
 LOAN_DEP_AMOUNT, LOAN_DEP_PRICE, LOAN_BORROW_AMOUNT, LOAN_BORROW_PRICE, \
-LOAN_LTV, LOAN_BORROW_FACTOR, IL_INPUT = range(14)
+LOAN_LTV, LOAN_BORROW_FACTOR, IL_INPUT, IL_FEES = range(15)
 
 user_data_temp = {}
 
@@ -54,7 +54,7 @@ def calculate_looping_table(tokens, ltv, supply_rate, borrow_rate):
         })
 
     return rounds
-    
+
 def back_to_menu_button():
     return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В начало", callback_data="back")]])
 
@@ -63,79 +63,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📈 Ставка финансирования", callback_data="rate"),
          InlineKeyboardButton("🔁 Лупинг", callback_data="looping")],
         [InlineKeyboardButton("💳 Кредитование", callback_data="loan"),
-         InlineKeyboardButton("📉 IL", callback_data="il")]
+         InlineKeyboardButton("📉 Impermanent Loss", callback_data="il")]
     ])
     if update.message:
-        await update.message.reply_text("📋 Главное меню\n\n🔽 Выбери один из вариантов:", reply_markup=keyboard)
+        await update.message.reply_markdown_v2("*📋Главное меню калькулятора*", reply_markup=keyboard)
     elif update.callback_query:
         await update.callback_query.message.edit_text("📋 Главное меню\n\n🔽 Выбери один из вариантов:", reply_markup=keyboard)
     return CHOOSING
-
-async def get_il_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    text = update.message.text.strip().replace(',', '.')
-    user_state = user_data_temp.setdefault(chat_id, {})
-
-    try:
-        if 'token1' not in user_state:
-            user_state['token1'] = text.upper()
-            await update.message.reply_text(f"💰 Введи цену {user_state['token1']} при входе в пул:")
-            return IL_INPUT
-
-        elif 'p1_initial' not in user_state:
-            user_state['p1_initial'] = float(text)
-            await update.message.reply_text(f"📉 Введи текущую цену {user_state['token1']}:")
-            return IL_INPUT
-
-        elif 'p1_now' not in user_state:
-            user_state['p1_now'] = float(text)
-            await update.message.reply_text("🔠 Введи название второй монеты:")
-            return IL_INPUT
-
-        elif 'token2' not in user_state:
-            user_state['token2'] = text.upper()
-            await update.message.reply_text(f"💰 Введи цену {user_state['token2']} при входе в пул:")
-            return IL_INPUT
-
-        elif 'p2_initial' not in user_state:
-            user_state['p2_initial'] = float(text)
-            await update.message.reply_text(f"📉 Введи текущую цену {user_state['token2']}:")
-            return IL_INPUT
-
-        elif 'p2_now' not in user_state:
-            user_state['p2_now'] = float(text)
-
-            p1_initial = user_state['p1_initial']
-            p1_now = user_state['p1_now']
-            p2_initial = user_state['p2_initial']
-            p2_now = user_state['p2_now']
-
-            r1 = p1_now / p1_initial
-            r2 = p2_now / p2_initial
-            k = r1 / r2
-            il = (2 * (k ** 0.5) / (1 + k)) - 1
-
-            response = (
-                "📉 Impermanent Loss\n"
-                "```\n"
-                f"{user_state['token1']}: {p1_initial} → {p1_now}\n"
-                f"{user_state['token2']}: {p2_initial} → {p2_now}\n"
-                f"IL: {abs(il) * 100:.2f}%\n"
-                "```"
-            )
-
-            await update.message.reply_text(response)
-            return await start(update, context)
-
-        else:
-            user_data_temp[chat_id] = {}
-            await update.message.reply_text("❌ Что-то пошло не так. Начнём заново. Введи название первой монеты:")
-            return IL_INPUT
-
-    except Exception:
-        await update.message.reply_text("❌ Введи корректное число или название токена.")
-        return IL_INPUT
-
+    
 async def get_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         rate = float(update.message.text.strip().replace('%', ''))
@@ -145,24 +80,120 @@ async def get_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("❌ Пожалуйста, введи число. Например: 0.5")
         return RATE
-
+        
 async def get_hours(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        hours = float(update.message.text.strip().replace('ч', '').replace(' ', ''))
-        rate = user_data_temp[update.effective_chat.id]['rate']
-        simple = calculate_simple(rate, hours)
-        response = (
-            f"✅ Расчёт готов! \n"
-            f"📈 Процент за период: {rate}% \n"
-            f"⏱ Начисляется каждые: {hours} ч \n"
-            f"📅 Простой % в год: {simple:.2f}% \n"
-            f"⬇️ Выбери следующую функцию:"
-        )
-        await update.message.reply_text(response)
-        return await start(update, context)  # ✅
-    except Exception:
-        await update.message.reply_text("❌ Что-то пошло не так. Попробуй ещё раз.")
-        return RATE
+            try:
+                hours = float(update.message.text.strip().replace('ч', '').replace(' ', ''))
+                rate = user_data_temp.get(update.effective_chat.id, {}).get('rate')
+
+                if rate is None:
+                    await update.message.reply_text("❌ Ставка не найдена. Начни сначала.")
+                    return await start(update, context)
+
+                simple = calculate_simple(rate, hours)
+
+                response = (
+                    "*📈 Расчёт фандинга*\n"
+                    "```\n"
+                    f"{'Ставка финансирования:':<22} {rate}%\n"
+                    f"{'Начисляется каждые:':<22} {hours} ч\n"
+                    f"{'APR:':<22} {simple:.2f}%\n"
+                    "```")
+
+                await update.message.reply_markdown_v2(response)
+                return await start(update, context)
+
+            except Exception:
+                await update.message.reply_text("❌ Что-то пошло не так. Попробуй ещё раз.")
+                return RATE
+                
+async def get_il_fees(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            chat_id = update.effective_chat.id
+            text = update.message.text.strip().replace(',', '.')
+            user_state = user_data_temp.get(chat_id, {})
+
+            try:
+                fee_pct = float(text)
+                investment = 1000
+                half = investment / 2
+
+                p1_initial = user_state['p1_initial']
+                p1_now = user_state['p1_now']
+                p2_initial = user_state['p2_initial']
+                p2_now = user_state['p2_now']
+
+                r1 = p1_now / p1_initial
+                r2 = p2_now / p2_initial
+                k = r1 / r2
+                il = (2 * (k ** 0.5) / (1 + k)) - 1
+
+                hodl_value = half * r1 + half * r2
+
+                sqrt_k = k ** 0.5
+                pool_token1 = (half / p1_initial) * sqrt_k
+                pool_token2 = (half / p2_initial) / sqrt_k
+                pool_value = (pool_token1 * p1_now) + (pool_token2 * p2_now)
+
+                fee_profit = investment * fee_pct / 100
+                pool_value_with_fee = pool_value + fee_profit
+
+                delta_with_fee = hodl_value - pool_value_with_fee
+                delta_with_fee_pct = (delta_with_fee / hodl_value) * 100
+
+                # Минимальная комиссия, чтобы покрыть IL
+                min_fee_dollars = max(hodl_value - pool_value, 0)
+                min_fee_pct = (min_fee_dollars / investment) * 100
+
+                # Сравнение пулов с разными комиссиями
+                fee_options = [0.05, 0.3, 1.0]
+                fee_table = "\n\ud83d\udcca \u0421\u0440\u0430\u0432\u043d\u0435\u043d\u0438\u0435 \u043a\u043e\u043c\u0438\u0441\u0441\u0438\u0439:\n\u0422\u0438\u043f   \u2502 \u041a\u043e\u043c\u0438\u0441\u0441\u0438\u044f \u2502 \u0414\u043e\u0445\u043e\u0434 \u2502 \u0412\u044b\u0433\u043e\u0434\u043d\u043e?\n" + "-"*35 + "\n"
+
+                recommended_pool = None
+                for fee in fee_options:
+                    fee_amt = investment * fee / 100
+                    total = pool_value + fee_amt
+                    diff = total - hodl_value
+                    profitable = "\u2705" if diff >= 0 else "\u274c"
+                    fee_table += f"{fee:>4.2f}% \u2502 ${fee_amt:>7.2f} \u2502 ${diff:+7.2f} \u2502 {profitable}\n"
+                    if recommended_pool is None and diff >= 0:
+                        recommended_pool = fee
+
+                if recommended_pool:
+                    recommendation = f"\n\ud83d\udccc *\u0420\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0430\u0446\u0438\u044f:* \u041f\u0443\u043b \u0441 \u043a\u043e\u043c\u0438\u0441\u0441\u0438\u0435\u0439 {recommended_pool:.2f}% \u043f\u0435\u0440\u0435\u043a\u0440\u044b\u0432\u0430\u0435\u0442 IL \u0438 \u0432\u044b\u0433\u043e\u0434\u0435\u043d \u2705"
+                else:
+                    recommendation = "\n\ud83d\udccc *\u0420\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0430\u0446\u0438\u044f:* \u041d\u0438 \u043e\u0434\u0438\u043d \u0438\u0437 \u0441\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u044b\u0445 \u043f\u0443\u043b\u043e\u0432 \u043d\u0435 \u043f\u0435\u0440\u0435\u043a\u0440\u044b\u0432\u0430\u0435\u0442 IL \u274c"
+
+                response = (
+                    "\ud83d\udd89 *Impermanent Loss*\n"
+                    "```\n"
+                    f"{'\u041c\u043e\u043d\u0435\u0442\u0430':<10}\u2502{'\u0412\u0445\u043e\u0434':>10}\u2502{'\u0412\u044b\u0445\u043e\u0434':>10}\n"
+                    f"{'-'*10}\u2502{'-'*10}\u2502{'-'*10}\n"
+                    f"{user_state['token1']:<10}\u2502{p1_initial:>10.2f}\u2502{p1_now:>10.2f}\n"
+                    f"{user_state['token2']:<10}\u2502{p2_initial:>10.2f}\u2502{p2_now:>10.2f}\n"
+                    f"{'-'*33}\n"
+                    f"IL: \u2192 \u2192 \u2192 {abs(il)*100:>6.2f}%\n"
+                    f"{'-'*33}\n"
+                    f"HODL:               ${hodl_value:,.2f}\n"
+                    f"\u041f\u0443\u043b \u0431\u0435\u0437 \u043a\u043e\u043c\u0438\u0441\u0441\u0438\u0439:   ${pool_value:,.2f}\n"
+                    f"\u041a\u043e\u043c\u0438\u0441\u0441\u0438\u0438 ({fee_pct}%): +${fee_profit:,.2f}\n"
+                    f"\u041f\u0443\u043b \u0441 \u043a\u043e\u043c\u0438\u0441\u0441\u0438\u044f\u043c\u0438:   ${pool_value_with_fee:,.2f}\n"
+                    f"{'-'*33}\n"
+                    f"\u0420\u0430\u0437\u043d\u0438\u0446\u0430:            ${delta_with_fee:,.2f} ({delta_with_fee_pct:+.2f}%)\n"
+                    "```"
+                )
+
+                response += f"\n\u041d\u0435\u043e\u0431\u0445\u043e\u0434\u0438\u043c\u0430\u044f \u043a\u043e\u043c\u0438\u0441\u0441\u0438\u044f \u0434\u043b\u044f \u0432\u044b\u0445\u043e\u0434\u0430 \u0432 0: ~{min_fee_pct:.2f}%"
+                response += f"\n{fee_table}"
+                response += recommendation
+
+                await update.message.reply_markdown_v2(response)
+                user_data_temp[chat_id] = {}
+                return await start(update, context)
+
+            except:
+                await update.message.reply_text("\u274c \u0412\u0432\u0435\u0434\u0438 \u0447\u0438\u0441\u043b\u043e. \u041f\u0440\u0438\u043c\u0435\u0440: 0.3")
+                return IL_FEES
+
         
 async def get_loop_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -206,7 +237,7 @@ async def get_loop_borrow(update: Update, context: ContextTypes.DEFAULT_TYPE):
             borrow_rate=borrow
         )
 
-        response = "✅ Расчёт по лупингу (10 кругов):\n\n"
+        response = "🔁 *Лупинг (10 кругов)*\n"
         response += "```\n"
         response += "Круг |   Депозит  |   Заём   |   Долг   |   APY\n"
         response += "-----|------------|----------|----------|--------\n"
@@ -214,10 +245,12 @@ async def get_loop_borrow(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for r in rounds:
             response += f"{r['round']:>4} | {r['deposit']:>10.2f} | {r['borrow']:>8.2f} | {r['total_borrow']:>8.2f} | {r['apy']:>6.2f}%\n"
 
-        response += "```\n"
-        response += "\n⬇️ Выбери следующую функцию:"
-        await update.message.reply_text(response)
-        return await start(update, context)  # ✅
+        response += "```"
+
+        await update.message.reply_text(response, parse_mode='Markdown')
+        
+        return await start(update, context)
+
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
         return LOOP_BORROW
@@ -273,33 +306,34 @@ async def get_loan_ltv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         await update.message.reply_text("❌ Введи число.")
         return LOAN_LTV
-
 async def get_loan_borrow_factor(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        factor = float(update.message.text.strip())
-        data = user_data_temp[update.effective_chat.id]
-        dep_value = data['dep_amount'] * data['dep_price']
-        borrow_value = data['borrow_amount'] * data['borrow_price']
+            try:
+                factor = float(update.message.text.strip())
+                data = user_data_temp[update.effective_chat.id]
+                dep_value = data['dep_amount'] * data['dep_price']
+                borrow_value = data['borrow_amount'] * data['borrow_price']
 
-        hf = (data['ltv'] * dep_value) / (borrow_value * factor)
-        rf = 1 / hf if hf != 0 else 0
-        liquidation_price_dep = data['dep_price'] / hf if hf != 0 else 0
-        liquidation_price_borrow = data['borrow_price'] / hf if hf != 0 else 0
+                hf = (data['ltv'] * dep_value) / (borrow_value * factor)
+                rf = 1 / hf if hf != 0 else 0
+                liquidation_price_dep = data['dep_price'] / hf if hf != 0 else 0
+                liquidation_price_borrow = data['borrow_price'] / hf if hf != 0 else 0
 
-        response = (
-            f"✅ Результаты расчёта: \n"
-            f"🟢 Health Factor: {hf:.2f} \n"
-            f"⚠️ Risk Factor: {rf:.1%} \n"
-            f"💣 Ликв. цена депозита: ${liquidation_price_dep:.4f} \n"
-            f"💣 Ликв. цена займа: ${liquidation_price_borrow:.4f} \n"
-            f"⬇️ Выбери следующую функцию:"
-        )
+                response = (
+                    "💳 *Кредитование*\n"
+                    "```\n"
+                    f"Health Factor:         {hf:.2f}\n"
+                    f"Risk Factor:           {rf:.1%}\n"
+                    f"Ликв. цена депозита:   ${liquidation_price_dep:.4f}\n"
+                    f"Ликв. цена займа:      ${liquidation_price_borrow:.4f}\n"
+                    "```\n"
+                )
 
-        await update.message.reply_text(response)
-        return await start(update, context)
-    except:
-        await update.message.reply_text("❌ Что-то пошло не так.")
-        return LOAN_BORROW_FACTOR
+                await update.message.reply_text(response, parse_mode='Markdown')
+                return await start(update, context)
+
+            except:
+                await update.message.reply_text("❌ Что-то пошло не так.")
+                return LOAN_BORROW_FACTOR
 
 async def get_il_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -307,68 +341,35 @@ async def get_il_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_state = user_data_temp.setdefault(chat_id, {})
 
     try:
-        # Шаг 1: название первой монеты
         if 'token1' not in user_state:
             user_state['token1'] = text.upper()
             await update.message.reply_text(f"💰 Введи цену {user_state['token1']} при входе в пул:")
             return IL_INPUT
 
-        # Шаг 2: цена первой монеты при входе
         elif 'p1_initial' not in user_state:
             user_state['p1_initial'] = float(text)
             await update.message.reply_text(f"📉 Введи текущую цену {user_state['token1']}:")
             return IL_INPUT
 
-        # Шаг 3: текущая цена первой монеты
         elif 'p1_now' not in user_state:
             user_state['p1_now'] = float(text)
             await update.message.reply_text("🔠 Введи название второй монеты:")
             return IL_INPUT
 
-        # Шаг 4: название второй монеты
         elif 'token2' not in user_state:
             user_state['token2'] = text.upper()
             await update.message.reply_text(f"💰 Введи цену {user_state['token2']} при входе в пул:")
             return IL_INPUT
 
-        # Шаг 5: цена второй монеты при входе
         elif 'p2_initial' not in user_state:
             user_state['p2_initial'] = float(text)
             await update.message.reply_text(f"📉 Введи текущую цену {user_state['token2']}:")
             return IL_INPUT
 
-        # Шаг 6: текущая цена второй монеты
         elif 'p2_now' not in user_state:
             user_state['p2_now'] = float(text)
-
-            # Расчёт
-            p1_initial = user_state['p1_initial']
-            p1_now = user_state['p1_now']
-            p2_initial = user_state['p2_initial']
-            p2_now = user_state['p2_now']
-
-            r1 = p1_now / p1_initial
-            r2 = p2_now / p2_initial
-            k = r1 / r2
-            il = (2 * (k ** 0.5) / (1 + k)) - 1
-
-            response = (
-                "📉 *Impermanent Loss*\n"
-                "```\n"
-                f"{'Монета':<10}│{'Вход':>10}│{'Выход':>10}\n"
-                f"{'-'*10}│{'-'*10}│{'-'*10}\n"
-                f"{user_state['token1']:<10}│{p1_initial:>10.2f}│{p1_now:>10.2f}\n"
-                f"{user_state['token2']:<10}│{p2_initial:>10.2f}│{p2_now:>10.2f}\n"
-                f"{'-'*33}\n"
-                f"{'Impermanent Loss':<10} → → →{abs(il) * 100:>10.2f}%\n"
-                "```"
-            )
-            await update.message.reply_markdown_v2(response)
-            user_data_temp[chat_id] = {}
-            return await start(update, context)
-
-            await update.message.reply_text(response)
-            return await start(update, context)
+            await update.message.reply_text("💵 Сколько процентов ты заработал на комиссиях? (например: 0.5)")
+            return IL_FEES
 
         else:
             user_data_temp[chat_id] = {}
@@ -378,7 +379,38 @@ async def get_il_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         await update.message.reply_text("❌ Введи корректное число или название токена.")
         return IL_INPUT
+async def get_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+           try:
+               rate = float(update.message.text.strip().replace('%', ''))
+               user_data_temp[update.effective_chat.id] = {'rate': rate}
+               await update.message.reply_text("⏱ Теперь напиши, раз в сколько часов начисляется процент (например: 4)")
+               return HOURS
+           except ValueError:
+               await update.message.reply_text("❌ Пожалуйста, введи число. Например: 0.5")
+               return RATE
 
+async def get_hours(update: Update, context: ContextTypes.DEFAULT_TYPE):
+           try:
+               hours = float(update.message.text.strip().replace('ч', '').replace(' ', ''))
+               rate = user_data_temp[update.effective_chat.id]['rate']
+               simple = calculate_simple(rate, hours)
+
+               response = (
+                   "*📈 Расчёт фандинга*\n"
+                   "```\n"
+                   f"{'Ставка финансирования:':<22} {rate}%\n"
+                   f"{'Начисляется каждые:':<22} {hours} ч\n"
+                   f"{'APR:':<22} {simple:.2f}%\n"
+                   "```"
+               )
+
+               await update.message.reply_markdown_v2(response)
+               return await start(update, context)
+
+           except Exception:
+               await update.message.reply_text("❌ Что-то пошло не так. Попробуй ещё раз.")
+               return RATE
+               
 from telegram.ext import CallbackQueryHandler
 
 async def choose_option(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -416,7 +448,7 @@ async def choose_option(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🔠 Введи название первой монеты:",
             reply_markup=back_to_menu_button()
         )
-        user_data_temp[query.from_user.id] = {}  # <-- исправлено!
+        user_data_temp[query.from_user.id] = {}  # <-- очищаем
         return IL_INPUT
 
     else:
@@ -425,72 +457,76 @@ async def choose_option(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
 # --- Хендлер состояний ---
 conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(choose_option)],
-        states={
-            CHOOSING: [CallbackQueryHandler(choose_option)],
-            RATE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_rate),
-                CallbackQueryHandler(choose_option, pattern="^back$")
-            ],
-            HOURS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_hours),
-                CallbackQueryHandler(choose_option, pattern="^back$")
-            ],
-            LOOP_TOKENS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_loop_tokens),
-                CallbackQueryHandler(choose_option, pattern="^back$")
-            ],
-            LOOP_LTV: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_loop_ltv),
-                CallbackQueryHandler(choose_option, pattern="^back$")
-            ],
-            LOOP_SUPPLY: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_loop_supply),
-                CallbackQueryHandler(choose_option, pattern="^back$")
-            ],
-            LOOP_BORROW: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_loop_borrow),
-                CallbackQueryHandler(choose_option, pattern="^back$")
-            ],
-            LOAN_DEP_AMOUNT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_dep_amount),
-                CallbackQueryHandler(choose_option, pattern="^back$")
-            ],
-            LOAN_DEP_PRICE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_dep_price),
-                CallbackQueryHandler(choose_option, pattern="^back$")
-            ],
-            LOAN_BORROW_AMOUNT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_borrow_amount),
-                CallbackQueryHandler(choose_option, pattern="^back$")
-            ],
-            LOAN_BORROW_PRICE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_borrow_price),
-                CallbackQueryHandler(choose_option, pattern="^back$")
-            ],
-            LOAN_LTV: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_ltv),
-                CallbackQueryHandler(choose_option, pattern="^back$")
-            ],
-            LOAN_BORROW_FACTOR: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_borrow_factor),
-                CallbackQueryHandler(choose_option, pattern="^back$")
-            ],
-            IL_INPUT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_il_input),
-                CallbackQueryHandler(choose_option, pattern="^back$")
-            ],
-        },
-        fallbacks=[]
-    )
+    entry_points=[CallbackQueryHandler(choose_option)],
+    states={
+        CHOOSING: [CallbackQueryHandler(choose_option)],
+        RATE: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_rate),
+            CallbackQueryHandler(choose_option, pattern="^back$")
+        ],
+        HOURS: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_hours),
+            CallbackQueryHandler(choose_option, pattern="^back$")
+        ],
+        LOOP_TOKENS: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_loop_tokens),
+            CallbackQueryHandler(choose_option, pattern="^back$")
+        ],
+        LOOP_LTV: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_loop_ltv),
+            CallbackQueryHandler(choose_option, pattern="^back$")
+        ],
+        LOOP_SUPPLY: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_loop_supply),
+            CallbackQueryHandler(choose_option, pattern="^back$")
+        ],
+        LOOP_BORROW: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_loop_borrow),
+            CallbackQueryHandler(choose_option, pattern="^back$")
+        ],
+        LOAN_DEP_AMOUNT: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_dep_amount),
+            CallbackQueryHandler(choose_option, pattern="^back$")
+        ],
+        LOAN_DEP_PRICE: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_dep_price),
+            CallbackQueryHandler(choose_option, pattern="^back$")
+        ],
+        LOAN_BORROW_AMOUNT: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_borrow_amount),
+            CallbackQueryHandler(choose_option, pattern="^back$")
+        ],
+        LOAN_BORROW_PRICE: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_borrow_price),
+            CallbackQueryHandler(choose_option, pattern="^back$")
+        ],
+        LOAN_LTV: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_ltv),
+            CallbackQueryHandler(choose_option, pattern="^back$")
+        ],
+        LOAN_BORROW_FACTOR: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_loan_borrow_factor),
+            CallbackQueryHandler(choose_option, pattern="^back$")
+        ],
+        IL_INPUT: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_il_input),
+            CallbackQueryHandler(choose_option, pattern="^back$")
+        ],
+        IL_FEES: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_il_fees),
+            CallbackQueryHandler(choose_option, pattern="^back$")
+        ],
+    },
+    fallbacks=[]
+)
 
-    # --- Запуск ---
+# --- Запуск ---
 if __name__ == "__main__":
-        keep_alive()
-        app = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
+    keep_alive()
+    app = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
 
-        app.add_handler(conv_handler)
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
+    app.add_handler(conv_handler)
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
 
-        app.run_polling()
+    app.run_polling()

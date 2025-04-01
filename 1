@@ -32,7 +32,7 @@ LOAN_LTV, LOAN_BORROW_FACTOR, IL_INPUT, IL_FEES = range(15)
 user_data_temp = {}
 
 def calculate_simple(rate, hours):
-    periods = 8760 / hours  # часов в году
+    periods = 8760 / hours
     return rate * periods
 
 def calculate_looping_table(tokens, ltv, supply_rate, borrow_rate):
@@ -66,7 +66,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("📉 Impermanent Loss", callback_data="il")]
     ])
     if update.message:
-        await update.message.reply_markdown_v2("*📋Главное меню калькулятора*", reply_markup=keyboard)
+        await update.message.reply_markdown_v2("*📋 Главное меню калькулятора*", reply_markup=keyboard)
     elif update.callback_query:
         await update.callback_query.message.edit_text("📋 Главное меню\n\n🔽 Выбери один из вариантов:", reply_markup=keyboard)
     return CHOOSING
@@ -106,95 +106,96 @@ async def get_hours(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 await update.message.reply_text("❌ Что-то пошло не так. Попробуй ещё раз.")
                 return RATE
-                
 async def get_il_fees(update: Update, context: ContextTypes.DEFAULT_TYPE):
-            chat_id = update.effective_chat.id
-            text = update.message.text.strip().replace(',', '.')
-            user_state = user_data_temp.get(chat_id, {})
+    chat_id = update.effective_chat.id
+    text = update.message.text.strip().replace(',', '.')
+    user_state = user_data_temp.get(chat_id, {})
 
-            try:
-                fee_pct = float(text)
-                investment = 1000
-                half = investment / 2
+    try:
+        fee_pct = float(text)
 
-                p1_initial = user_state['p1_initial']
-                p1_now = user_state['p1_now']
-                p2_initial = user_state['p2_initial']
-                p2_now = user_state['p2_now']
+        required_keys = ['p1_initial', 'p1_now', 'p2_initial', 'p2_now']
+        if not all(key in user_state for key in required_keys):
+            await update.message.reply_text("❌ Отсутствуют данные. Попробуй заново.")
+            return await start(update, context)
 
-                r1 = p1_now / p1_initial
-                r2 = p2_now / p2_initial
-                k = r1 / r2
-                il = (2 * (k ** 0.5) / (1 + k)) - 1
+        p1_initial = user_state['p1_initial']
+        p1_now = user_state['p1_now']
+        p2_initial = user_state['p2_initial']
+        p2_now = user_state['p2_now']
 
-                hodl_value = half * r1 + half * r2
+        investment = 1000
+        half = investment / 2
 
-                sqrt_k = k ** 0.5
-                pool_token1 = (half / p1_initial) * sqrt_k
-                pool_token2 = (half / p2_initial) / sqrt_k
-                pool_value = (pool_token1 * p1_now) + (pool_token2 * p2_now)
+        r1 = p1_now / p1_initial
+        r2 = p2_now / p2_initial
+        k = r1 / r2
+        il = (2 * (k ** 0.5) / (1 + k)) - 1
 
-                fee_profit = investment * fee_pct / 100
-                pool_value_with_fee = pool_value + fee_profit
+        hodl_value = half * r1 + half * r2
+        sqrt_k = k ** 0.5
+        pool_token1 = (half / p1_initial) * sqrt_k
+        pool_token2 = (half / p2_initial) / sqrt_k
+        pool_value = (pool_token1 * p1_now) + (pool_token2 * p2_now)
 
-                delta_with_fee = hodl_value - pool_value_with_fee
-                delta_with_fee_pct = (delta_with_fee / hodl_value) * 100
+        fee_profit = investment * fee_pct / 100
+        pool_value_with_fee = pool_value + fee_profit
 
-                # Минимальная комиссия, чтобы покрыть IL
-                min_fee_dollars = max(hodl_value - pool_value, 0)
-                min_fee_pct = (min_fee_dollars / investment) * 100
+        delta_with_fee = hodl_value - pool_value_with_fee
+        delta_with_fee_pct = (delta_with_fee / hodl_value) * 100
 
-                # Сравнение пулов с разными комиссиями
-                fee_options = [0.05, 0.3, 1.0]
-                fee_table = "\n\ud83d\udcca \u0421\u0440\u0430\u0432\u043d\u0435\u043d\u0438\u0435 \u043a\u043e\u043c\u0438\u0441\u0441\u0438\u0439:\n\u0422\u0438\u043f   \u2502 \u041a\u043e\u043c\u0438\u0441\u0441\u0438\u044f \u2502 \u0414\u043e\u0445\u043e\u0434 \u2502 \u0412\u044b\u0433\u043e\u0434\u043d\u043e?\n" + "-"*35 + "\n"
+        min_fee_dollars = max(hodl_value - pool_value, 0)
+        min_fee_pct = (min_fee_dollars / investment) * 100
 
-                recommended_pool = None
-                for fee in fee_options:
-                    fee_amt = investment * fee / 100
-                    total = pool_value + fee_amt
-                    diff = total - hodl_value
-                    profitable = "\u2705" if diff >= 0 else "\u274c"
-                    fee_table += f"{fee:>4.2f}% \u2502 ${fee_amt:>7.2f} \u2502 ${diff:+7.2f} \u2502 {profitable}\n"
-                    if recommended_pool is None and diff >= 0:
-                        recommended_pool = fee
+        fee_options = [0.05, 0.3, 1.0]
+        fee_table = "\n📊 Сравнение комиссий:\nТип   │ Комиссия │ Доход │ Выгодно?\n" + "-"*35 + "\n"
 
-                if recommended_pool:
-                    recommendation = f"\n\ud83d\udccc *\u0420\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0430\u0446\u0438\u044f:* \u041f\u0443\u043b \u0441 \u043a\u043e\u043c\u0438\u0441\u0441\u0438\u0435\u0439 {recommended_pool:.2f}% \u043f\u0435\u0440\u0435\u043a\u0440\u044b\u0432\u0430\u0435\u0442 IL \u0438 \u0432\u044b\u0433\u043e\u0434\u0435\u043d \u2705"
-                else:
-                    recommendation = "\n\ud83d\udccc *\u0420\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0430\u0446\u0438\u044f:* \u041d\u0438 \u043e\u0434\u0438\u043d \u0438\u0437 \u0441\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u044b\u0445 \u043f\u0443\u043b\u043e\u0432 \u043d\u0435 \u043f\u0435\u0440\u0435\u043a\u0440\u044b\u0432\u0430\u0435\u0442 IL \u274c"
+        recommended_pool = None
+        for fee in fee_options:
+            fee_amt = investment * fee / 100
+            total = pool_value + fee_amt
+            diff = total - hodl_value
+            profitable = "✅" if diff >= 0 else "❌"
+            fee_table += f"{fee:>4.2f}% │ ${fee_amt:>7.2f} │ ${diff:+7.2f} │ {profitable}\n"
+            if recommended_pool is None and diff >= 0:
+                recommended_pool = fee
 
-                response = (
-                    "\ud83d\udd89 *Impermanent Loss*\n"
-                    "```\n"
-                    f"{'\u041c\u043e\u043d\u0435\u0442\u0430':<10}\u2502{'\u0412\u0445\u043e\u0434':>10}\u2502{'\u0412\u044b\u0445\u043e\u0434':>10}\n"
-                    f"{'-'*10}\u2502{'-'*10}\u2502{'-'*10}\n"
-                    f"{user_state['token1']:<10}\u2502{p1_initial:>10.2f}\u2502{p1_now:>10.2f}\n"
-                    f"{user_state['token2']:<10}\u2502{p2_initial:>10.2f}\u2502{p2_now:>10.2f}\n"
-                    f"{'-'*33}\n"
-                    f"IL: \u2192 \u2192 \u2192 {abs(il)*100:>6.2f}%\n"
-                    f"{'-'*33}\n"
-                    f"HODL:               ${hodl_value:,.2f}\n"
-                    f"\u041f\u0443\u043b \u0431\u0435\u0437 \u043a\u043e\u043c\u0438\u0441\u0441\u0438\u0439:   ${pool_value:,.2f}\n"
-                    f"\u041a\u043e\u043c\u0438\u0441\u0441\u0438\u0438 ({fee_pct}%): +${fee_profit:,.2f}\n"
-                    f"\u041f\u0443\u043b \u0441 \u043a\u043e\u043c\u0438\u0441\u0441\u0438\u044f\u043c\u0438:   ${pool_value_with_fee:,.2f}\n"
-                    f"{'-'*33}\n"
-                    f"\u0420\u0430\u0437\u043d\u0438\u0446\u0430:            ${delta_with_fee:,.2f} ({delta_with_fee_pct:+.2f}%)\n"
-                    "```"
-                )
+        recommendation = (f"\n📌 *Рекомендация:* Пул с комиссией {recommended_pool:.2f}% перекрывает IL и выгоден ✅"
+                          if recommended_pool else
+                          "\n📌 *Рекомендация:* Ни один из стандартных пулов не перекрывает IL ❌")
 
-                response += f"\n\u041d\u0435\u043e\u0431\u0445\u043e\u0434\u0438\u043c\u0430\u044f \u043a\u043e\u043c\u0438\u0441\u0441\u0438\u044f \u0434\u043b\u044f \u0432\u044b\u0445\u043e\u0434\u0430 \u0432 0: ~{min_fee_pct:.2f}%"
-                response += f"\n{fee_table}"
-                response += recommendation
+        response = (
+            "📉 *Impermanent Loss*\n"
+            "```\n"
+            f"{'Монета':<10}│{'Вход':>10}│{'Выход':>10}\n"
+            f"{'-'*10}│{'-'*10}│{'-'*10}\n"
+            f"{user_state['token1']:<10}│{p1_initial:>10.2f}│{p1_now:>10.2f}\n"
+            f"{user_state['token2']:<10}│{p2_initial:>10.2f}│{p2_now:>10.2f}\n"
+            f"{'-'*33}\n"
+            f"IL: → → → {abs(il)*100:>6.2f}%\n"
+            f"{'-'*33}\n"
+            f"HODL:               ${hodl_value:,.2f}\n"
+            f"Пул без комиссий:   ${pool_value:,.2f}\n"
+            f"Комиссии ({fee_pct}%): +${fee_profit:,.2f}\n"
+            f"Пул с комиссиями:   ${pool_value_with_fee:,.2f}\n"
+            f"{'-'*33}\n"
+            f"Разница:            ${delta_with_fee:,.2f} ({delta_with_fee_pct:+.2f}%)\n"
+            "```"
+        )
 
-                await update.message.reply_markdown_v2(response)
-                user_data_temp[chat_id] = {}
-                return await start(update, context)
+        response += f"\nНеобходимая комиссия для выхода в 0: ~{min_fee_pct:.2f}%"
+        response += fee_table
+        response += recommendation
 
-            except:
-                await update.message.reply_text("\u274c \u0412\u0432\u0435\u0434\u0438 \u0447\u0438\u0441\u043b\u043e. \u041f\u0440\u0438\u043c\u0435\u0440: 0.3")
-                return IL_FEES
+        await update.message.reply_text(response, parse_mode='Markdown')
+        user_data_temp[chat_id] = {}
+        return await start(update, context)
 
-        
+    except Exception as e:
+        print(f"Ошибка: {e}")  # Выведет текст ошибки в консоль
+        await update.message.reply_text("❌ Введи число. Пример: 0.3")
+        return IL_FEES
+
 async def get_loop_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         tokens = float(update.message.text.strip())
@@ -334,7 +335,7 @@ async def get_loan_borrow_factor(update: Update, context: ContextTypes.DEFAULT_T
             except:
                 await update.message.reply_text("❌ Что-то пошло не так.")
                 return LOAN_BORROW_FACTOR
-
+                
 async def get_il_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     text = update.message.text.strip().replace(',', '.')
@@ -342,6 +343,7 @@ async def get_il_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         if 'token1' not in user_state:
+            user_state.clear()
             user_state['token1'] = text.upper()
             await update.message.reply_text(f"💰 Введи цену {user_state['token1']} при входе в пул:")
             return IL_INPUT
@@ -371,14 +373,10 @@ async def get_il_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("💵 Сколько процентов ты заработал на комиссиях? (например: 0.5)")
             return IL_FEES
 
-        else:
-            user_data_temp[chat_id] = {}
-            await update.message.reply_text("❌ Что-то пошло не так. Начнём заново. Введи название первой монеты:")
-            return IL_INPUT
-
     except Exception:
         await update.message.reply_text("❌ Введи корректное число или название токена.")
         return IL_INPUT
+        
 async def get_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
            try:
                rate = float(update.message.text.strip().replace('%', ''))
